@@ -44,8 +44,8 @@ SERVER_CLIENT_ADDRESSES = {
 BORDER_LOCK_RADIUS = 2
 
 # Gameplay
-INITIAL_MUSHROOM_COUNT = 12
-MUSHROOM_RESPAWN_SECONDS = 30
+MATCH_DURATION_SECONDS = 120  # 2-minute rounds
+ACTIVE_MUSHROOM_COUNT = 5     # always maintain this many mushrooms on the map
 PLAYER_MOVE_COOLDOWN_MS = 100
 
 # Colors (RGB) for Pygame client

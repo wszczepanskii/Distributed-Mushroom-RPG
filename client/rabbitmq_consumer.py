@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+import time
 from typing import Any, Dict, Optional
 
 import pika
@@ -89,12 +90,19 @@ class ClientWorldView:
         self.map_width = 40
         self.map_height = 20
         self.border_x = 20
+        self.match_end_time_unix = 0.0
+        self.remaining_seconds = 0
+        self.game_over = False
+        self.winner_name = ""
+        self.winner_player_id = ""
+        self.winner_score = 0
 
     def load_initial(self, game_state) -> None:
         with self._lock:
             self.map_width = game_state.map_width
             self.map_height = game_state.map_height
             self.border_x = game_state.border_x
+            self._apply_match_from_proto(game_state)
             self.players = {
                 p.player_id: {
                     "player_id": p.player_id,
@@ -113,6 +121,14 @@ class ClientWorldView:
                 }
                 for m in game_state.mushrooms
             }
+
+    def _apply_match_from_proto(self, game_state) -> None:
+        self.match_end_time_unix = float(game_state.match_end_time_unix)
+        self.remaining_seconds = game_state.remaining_seconds
+        self.game_over = game_state.game_over
+        self.winner_name = game_state.winner_name
+        self.winner_player_id = game_state.winner_player_id
+        self.winner_score = game_state.winner_score
 
     def apply_event(self, event_type: EventType, payload: Dict[str, Any]) -> None:
         with self._lock:
@@ -138,6 +154,30 @@ class ClientWorldView:
                 pid = payload["player_id"]
                 if pid in self.players:
                     self.players[pid]["score"] = payload["score"]
+            elif event_type == EventType.GAME_STARTED:
+                self.match_end_time_unix = float(payload["end_time_unix"])
+                self.game_over = False
+            elif event_type == EventType.GAME_ENDED:
+                self.game_over = True
+                self.winner_name = payload.get("winner_name", "")
+                self.winner_player_id = payload.get("winner_player_id", "")
+                self.winner_score = payload.get("winner_score", 0)
+                self.remaining_seconds = 0
+
+    def is_game_over(self) -> bool:
+        with self._lock:
+            return self.game_over
+
+    def tick_timer(self) -> None:
+        """Update countdown locally between server syncs."""
+        with self._lock:
+            if self.game_over or self.match_end_time_unix <= 0:
+                self.remaining_seconds = 0
+                return
+
+            self.remaining_seconds = max(
+                0, int(self.match_end_time_unix - time.time())
+            )
 
     def snapshot(self):
         with self._lock:
@@ -147,4 +187,8 @@ class ClientWorldView:
                 self.map_width,
                 self.map_height,
                 self.border_x,
+                self.remaining_seconds,
+                self.game_over,
+                self.winner_name,
+                self.winner_score,
             )

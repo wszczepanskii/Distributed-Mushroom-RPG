@@ -14,12 +14,10 @@ from typing import List, Optional, Tuple
 
 from shared.config import (
     BORDER_X,
-    INITIAL_MUSHROOM_COUNT,
     MAP_HEIGHT,
     MAP_WIDTH,
     SERVER1_ID,
     is_near_border,
-    region_for_x,
 )
 from shared.models import Mushroom, Player, WorldState, new_id
 
@@ -34,13 +32,10 @@ class RegionGameState:
     # Initialization
     # ------------------------------------------------------------------
 
-    def seed_mushrooms_for_region(self, count: int = INITIAL_MUSHROOM_COUNT // 2) -> None:
-        """Spawn mushrooms only on this server's half of the map."""
+    def try_spawn_random_mushroom(self) -> Optional[Mushroom]:
+        """Place one mushroom on a random free cell in this server's region."""
         with self._lock:
-            spawned = 0
-            attempts = 0
-            while spawned < count and attempts < count * 20:
-                attempts += 1
+            for _ in range(100):
                 x, y = self._random_cell_in_region()
                 if self._cell_occupied(x, y):
                     continue
@@ -51,7 +46,8 @@ class RegionGameState:
                     owner_region=self.server_id,
                 )
                 self.world.mushrooms[mush.mushroom_id] = mush
-                spawned += 1
+                return mush
+            return None
 
     def _random_cell_in_region(self) -> Tuple[int, int]:
         if self.server_id == SERVER1_ID:

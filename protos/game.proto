@@ -46,6 +46,18 @@ service RegionSync {
 
   // Snapshot of mushrooms on the peer region (for cross-region client visibility).
   rpc GetActiveMushrooms(ActiveMushroomsRequest) returns (ActiveMushroomsResponse);
+
+  // Match coordinator (server1) starts the 2-minute clock on first join.
+  rpc EnsureMatchStarted(EnsureMatchStartedRequest) returns (EnsureMatchStartedResponse);
+
+  // Spawn a replacement mushroom on this region (called by peer after pickup).
+  rpc SpawnMushroom(SpawnMushroomRequest) returns (SpawnMushroomResponse);
+
+  // Replicate match end state from coordinator to peer.
+  rpc NotifyGameEnded(NotifyGameEndedRequest) returns (NotifyGameEndedAck);
+
+  // Ask coordinator (server1) to top up mushrooms to ACTIVE_MUSHROOM_COUNT.
+  rpc EnsureMushroomQuota(EnsureMushroomQuotaRequest) returns (EnsureMushroomQuotaAck);
 }
 
 // --- Shared messages ---
@@ -72,6 +84,12 @@ message GameState {
   int32 map_width = 3;
   int32 map_height = 4;
   int32 border_x = 5;
+  int64 match_end_time_unix = 6;
+  int32 remaining_seconds = 7;
+  bool game_over = 8;
+  string winner_name = 9;
+  string winner_player_id = 10;
+  int32 winner_score = 11;
 }
 
 // --- Client API ---
@@ -185,4 +203,39 @@ message ActiveMushroomsRequest {}
 
 message ActiveMushroomsResponse {
   repeated MushroomInfo mushrooms = 1;
+}
+
+message MatchState {
+  int64 end_time_unix = 1;
+  bool game_over = 2;
+  string winner_name = 3;
+  string winner_player_id = 4;
+  int32 winner_score = 5;
+}
+
+message EnsureMatchStartedRequest {}
+
+message EnsureMatchStartedResponse {
+  MatchState state = 1;
+}
+
+message SpawnMushroomRequest {}
+
+message SpawnMushroomResponse {
+  bool success = 1;
+  MushroomInfo mushroom = 2;
+}
+
+message NotifyGameEndedRequest {
+  MatchState state = 1;
+}
+
+message NotifyGameEndedAck {
+  bool success = 1;
+}
+
+message EnsureMushroomQuotaRequest {}
+
+message EnsureMushroomQuotaAck {
+  bool success = 1;
 }

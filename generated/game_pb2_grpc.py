@@ -334,6 +334,26 @@ class RegionSyncStub:
                 request_serializer=game__pb2.ActiveMushroomsRequest.SerializeToString,
                 response_deserializer=game__pb2.ActiveMushroomsResponse.FromString,
                 _registered_method=True)
+        self.EnsureMatchStarted = channel.unary_unary(
+                '/game.RegionSync/EnsureMatchStarted',
+                request_serializer=game__pb2.EnsureMatchStartedRequest.SerializeToString,
+                response_deserializer=game__pb2.EnsureMatchStartedResponse.FromString,
+                _registered_method=True)
+        self.SpawnMushroom = channel.unary_unary(
+                '/game.RegionSync/SpawnMushroom',
+                request_serializer=game__pb2.SpawnMushroomRequest.SerializeToString,
+                response_deserializer=game__pb2.SpawnMushroomResponse.FromString,
+                _registered_method=True)
+        self.NotifyGameEnded = channel.unary_unary(
+                '/game.RegionSync/NotifyGameEnded',
+                request_serializer=game__pb2.NotifyGameEndedRequest.SerializeToString,
+                response_deserializer=game__pb2.NotifyGameEndedAck.FromString,
+                _registered_method=True)
+        self.EnsureMushroomQuota = channel.unary_unary(
+                '/game.RegionSync/EnsureMushroomQuota',
+                request_serializer=game__pb2.EnsureMushroomQuotaRequest.SerializeToString,
+                response_deserializer=game__pb2.EnsureMushroomQuotaAck.FromString,
+                _registered_method=True)
 
 
 class RegionSyncServicer:
@@ -385,6 +405,34 @@ class RegionSyncServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def EnsureMatchStarted(self, request, context):
+        """Match coordinator (server1) starts the 2-minute clock on first join.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SpawnMushroom(self, request, context):
+        """Spawn a replacement mushroom on this region (called by peer after pickup).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def NotifyGameEnded(self, request, context):
+        """Replicate match end state from coordinator to peer.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def EnsureMushroomQuota(self, request, context):
+        """Ask coordinator (server1) to top up mushrooms to ACTIVE_MUSHROOM_COUNT.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_RegionSyncServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -417,6 +465,26 @@ def add_RegionSyncServicer_to_server(servicer, server):
                     servicer.GetActiveMushrooms,
                     request_deserializer=game__pb2.ActiveMushroomsRequest.FromString,
                     response_serializer=game__pb2.ActiveMushroomsResponse.SerializeToString,
+            ),
+            'EnsureMatchStarted': grpc.unary_unary_rpc_method_handler(
+                    servicer.EnsureMatchStarted,
+                    request_deserializer=game__pb2.EnsureMatchStartedRequest.FromString,
+                    response_serializer=game__pb2.EnsureMatchStartedResponse.SerializeToString,
+            ),
+            'SpawnMushroom': grpc.unary_unary_rpc_method_handler(
+                    servicer.SpawnMushroom,
+                    request_deserializer=game__pb2.SpawnMushroomRequest.FromString,
+                    response_serializer=game__pb2.SpawnMushroomResponse.SerializeToString,
+            ),
+            'NotifyGameEnded': grpc.unary_unary_rpc_method_handler(
+                    servicer.NotifyGameEnded,
+                    request_deserializer=game__pb2.NotifyGameEndedRequest.FromString,
+                    response_serializer=game__pb2.NotifyGameEndedAck.SerializeToString,
+            ),
+            'EnsureMushroomQuota': grpc.unary_unary_rpc_method_handler(
+                    servicer.EnsureMushroomQuota,
+                    request_deserializer=game__pb2.EnsureMushroomQuotaRequest.FromString,
+                    response_serializer=game__pb2.EnsureMushroomQuotaAck.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -585,6 +653,114 @@ class RegionSync:
             '/game.RegionSync/GetActiveMushrooms',
             game__pb2.ActiveMushroomsRequest.SerializeToString,
             game__pb2.ActiveMushroomsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def EnsureMatchStarted(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/game.RegionSync/EnsureMatchStarted',
+            game__pb2.EnsureMatchStartedRequest.SerializeToString,
+            game__pb2.EnsureMatchStartedResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SpawnMushroom(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/game.RegionSync/SpawnMushroom',
+            game__pb2.SpawnMushroomRequest.SerializeToString,
+            game__pb2.SpawnMushroomResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def NotifyGameEnded(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/game.RegionSync/NotifyGameEnded',
+            game__pb2.NotifyGameEndedRequest.SerializeToString,
+            game__pb2.NotifyGameEndedAck.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def EnsureMushroomQuota(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/game.RegionSync/EnsureMushroomQuota',
+            game__pb2.EnsureMushroomQuotaRequest.SerializeToString,
+            game__pb2.EnsureMushroomQuotaAck.FromString,
             options,
             channel_credentials,
             insecure,

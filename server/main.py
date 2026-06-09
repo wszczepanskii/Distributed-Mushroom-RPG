@@ -14,12 +14,13 @@ import argparse
 import logging
 import signal
 import sys
+import threading
 import time
 
 from shared.config import SERVER1_GRPC_PORT, SERVER1_ID, SERVER2_GRPC_PORT, SERVER2_ID
-from shared.events import EventType
 from server.game_state import RegionGameState
 from server.grpc_servicer import serve_grpc
+from server.match_manager import MatchManager
 from server.mutex import RicartAgrawalaMutex
 from server.peer_client import PeerRegionClient
 from server.rabbitmq_client import RabbitPublisher
@@ -36,6 +37,13 @@ SERVER_CONFIG = {
 }
 
 
+def _timer_monitor_loop(match: MatchManager, stop_event: threading.Event) -> None:
+    """Coordinator thread: end the match when the 2-minute clock runs out."""
+    while not stop_event.is_set():
+        match.check_and_end_if_expired()
+        stop_event.wait(1.0)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Mushroom RPG region server")
     parser.add_argument(
@@ -49,22 +57,18 @@ def main() -> None:
     port = SERVER_CONFIG[server_id]["port"]
 
     state = RegionGameState(server_id)
-    state.seed_mushrooms_for_region()
 
     peer = PeerRegionClient(server_id)
     publisher = RabbitPublisher()
 
-    # Ricart-Agrawala peer callback: synchronous gRPC REQUEST to other server.
     def peer_request_fn(mushroom_id: str, player_id: str, lamport_ts: int) -> bool:
         return peer.request_mushroom_lock(mushroom_id, player_id, lamport_ts)
 
     mutex = RicartAgrawalaMutex(server_id, peer_request_fn)
+    match = MatchManager(server_id, state, peer, publisher)
 
     try:
         publisher.connect()
-        # Announce existing mushrooms so clients joining either server see the full map.
-        for mushroom in state.all_mushrooms():
-            publisher.publish(EventType.MUSHROOM_SPAWNED, mushroom.to_dict())
     except Exception as exc:
         logger.error(
             "Failed to connect to RabbitMQ. Start it first (docker compose up -d). Error: %s",
@@ -77,10 +81,21 @@ def main() -> None:
     except Exception as exc:
         logger.warning("Peer not reachable yet (start other server): %s", exc)
 
-    grpc_server = serve_grpc(server_id, port, state, mutex, peer, publisher)
+    grpc_server = serve_grpc(server_id, port, state, mutex, peer, publisher, match)
+
+    timer_stop = threading.Event()
+    if match.is_coordinator:
+        threading.Thread(
+            target=_timer_monitor_loop,
+            args=(match, timer_stop),
+            daemon=True,
+            name="MatchTimer",
+        ).start()
+        logger.info("Match coordinator timer thread started (2-minute limit)")
 
     def shutdown(signum, frame):
         logger.info("Shutting down %s...", server_id)
+        timer_stop.set()
         grpc_server.stop(grace=2)
         publisher.close()
         peer.close()

@@ -27,6 +27,8 @@ from shared.config import (
     COLOR_PLAYER1,
     COLOR_PLAYER2,
     COLOR_TEXT,
+    MAP_HEIGHT,
+    MAP_WIDTH,
     SERVER_CLIENT_ADDRESSES,
     SERVER1_ID,
     TILE_SIZE,
@@ -37,7 +39,17 @@ from client.rabbitmq_consumer import ClientWorldView, RabbitConsumerThread
 
 
 def draw_world(screen, font, world: ClientWorldView, local_player_id: str):
-    players, mushrooms, map_w, map_h, border_x = world.snapshot()
+    (
+        players,
+        mushrooms,
+        map_w,
+        map_h,
+        border_x,
+        remaining_seconds,
+        game_over,
+        winner_name,
+        winner_score,
+    ) = world.snapshot()
     screen.fill(COLOR_BG)
 
     # Grid
@@ -65,16 +77,47 @@ def draw_world(screen, font, world: ClientWorldView, local_player_id: str):
         )
         pygame.draw.ellipse(screen, COLOR_MUSHROOM, rect)
 
-    # Players
-    for i, p in enumerate(players.values()):
-        color = COLOR_PLAYER1 if i % 2 == 0 else COLOR_PLAYER2
+    # Players — color by identity, not dict order (stable across server handoff)
+    for p in players.values():
         if p["player_id"] == local_player_id:
-            color = tuple(min(255, c + 40) for c in color)
+            color = tuple(min(255, c + 40) for c in COLOR_PLAYER1)
+        else:
+            color = COLOR_PLAYER2
         cx = p["x"] * TILE_SIZE + TILE_SIZE // 2
         cy = p["y"] * TILE_SIZE + TILE_SIZE // 2
         pygame.draw.circle(screen, color, (cx, cy), TILE_SIZE // 3)
         name_surf = font.render(f"{p['name']} ({p['score']})", True, COLOR_TEXT)
         screen.blit(name_surf, (p["x"] * TILE_SIZE, p["y"] * TILE_SIZE - 18))
+
+    # Match timer (top center)
+    mins, secs = divmod(remaining_seconds, 60)
+    timer_color = (255, 100, 100) if remaining_seconds <= 30 and not game_over else COLOR_TEXT
+    timer_surf = font.render(f"Time: {mins:02d}:{secs:02d}", True, timer_color)
+    screen.blit(timer_surf, (map_w * TILE_SIZE // 2 - 50, 8))
+
+    if game_over:
+        overlay = pygame.Surface((map_w * TILE_SIZE, map_h * TILE_SIZE))
+        overlay.set_alpha(180)
+        overlay.fill((10, 10, 20))
+        screen.blit(overlay, (0, 0))
+        title_font = pygame.font.SysFont("consolas", 28, bold=True)
+        if winner_name == "Draw":
+            title = title_font.render(
+                f"Draw! Both players have {winner_score} mushrooms",
+                True,
+                (255, 220, 80),
+            )
+        elif winner_name and winner_name != "Nobody":
+            title = title_font.render(
+                f"{winner_name} wins with {winner_score} mushrooms!",
+                True,
+                (255, 220, 80),
+            )
+        else:
+            title = title_font.render("Match over!", True, (255, 220, 80))
+        screen.blit(title, (map_w * TILE_SIZE // 2 - title.get_width() // 2, map_h * TILE_SIZE // 2 - 20))
+        hint = font.render("Press ESC to quit", True, COLOR_TEXT)
+        screen.blit(hint, (map_w * TILE_SIZE // 2 - hint.get_width() // 2, map_h * TILE_SIZE // 2 + 20))
 
 
 def main():
@@ -88,7 +131,7 @@ def main():
     args = parser.parse_args()
 
     pygame.init()
-    screen = pygame.display.set_mode((40 * TILE_SIZE, 20 * TILE_SIZE + 40))
+    screen = pygame.display.set_mode((MAP_WIDTH * TILE_SIZE, MAP_HEIGHT * TILE_SIZE + 40))
     pygame.display.set_caption("Distributed Mushroom RPG")
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("consolas", 14)
@@ -112,6 +155,8 @@ def main():
     running = True
 
     while running:
+        world.tick_timer()
+
         # Apply RabbitMQ deltas
         while True:
             try:
@@ -126,6 +171,8 @@ def main():
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
+                elif world.is_game_over():
+                    continue
                 elif event.key in (pygame.K_UP, pygame.K_w):
                     resp, refreshed = grpc_client.move(0, -1)
                     if not resp.success:
@@ -158,12 +205,13 @@ def main():
 
         draw_world(screen, font, world, grpc_client.player_id or "")
 
+        hud_text = status_msg if not world.is_game_over() else "Match finished!"
         hud = font.render(
-            f"{status_msg} | WASD move, SPACE pickup, ESC quit",
+            f"{hud_text} | WASD move, SPACE pickup, ESC quit",
             True,
             COLOR_TEXT,
         )
-        screen.blit(hud, (8, 20 * TILE_SIZE + 10))
+        screen.blit(hud, (8, MAP_HEIGHT * TILE_SIZE + 10))
         pygame.display.flip()
         clock.tick(30)
 

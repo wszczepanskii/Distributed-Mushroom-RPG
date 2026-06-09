@@ -30,6 +30,7 @@ from shared.models import Mushroom, Player
 
 if TYPE_CHECKING:
     from server.game_state import RegionGameState
+    from server.match_manager import MatchManager
     from server.mutex import RicartAgrawalaMutex
     from server.peer_client import PeerRegionClient
     from server.rabbitmq_client import RabbitPublisher
@@ -67,8 +68,23 @@ def build_game_state_proto(state: "RegionGameState") -> game_pb2.GameState:
     )
 
 
+def _attach_match_fields(
+    proto: game_pb2.GameState, match: "MatchManager"
+) -> game_pb2.GameState:
+    info = match.to_dict()
+    proto.match_end_time_unix = int(info["end_time_unix"])
+    proto.remaining_seconds = info["remaining_seconds"]
+    proto.game_over = info["game_over"]
+    proto.winner_name = info["winner_name"]
+    proto.winner_player_id = info["winner_player_id"]
+    proto.winner_score = info["winner_score"]
+    return proto
+
+
 def build_merged_client_state_proto(
-    state: "RegionGameState", peer: "PeerRegionClient"
+    state: "RegionGameState",
+    peer: "PeerRegionClient",
+    match: "MatchManager",
 ) -> game_pb2.GameState:
     """
     Full-map view for clients: local region + peer region entities.
@@ -85,13 +101,14 @@ def build_merged_client_state_proto(
     for peer_mushroom in peer.get_active_mushrooms():
         mushrooms.setdefault(peer_mushroom.mushroom_id, peer_mushroom)
 
-    return game_pb2.GameState(
+    proto = game_pb2.GameState(
         players=[_player_to_proto(p) for p in players.values()],
         mushrooms=[_mushroom_to_proto(m) for m in mushrooms.values()],
         map_width=MAP_WIDTH,
         map_height=MAP_HEIGHT,
         border_x=BORDER_X,
     )
+    return _attach_match_fields(proto, match)
 
 
 class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
@@ -104,27 +121,35 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
       mutex: "RicartAgrawalaMutex",
       peer: "PeerRegionClient",
       publisher: "RabbitPublisher",
+      match: "MatchManager",
   ):
       self.server_id = server_id
       self.state = state
       self.mutex = mutex
       self.peer = peer
       self.publisher = publisher
+      self.match = match
 
   def JoinGame(self, request, context):
+      self.match.ensure_started()
       player = self.state.add_player(request.name or "Adventurer")
       self.publisher.publish(EventType.PLAYER_JOINED, player.to_dict())
 
       return game_pb2.JoinResponse(
           success=True,
-          message="Welcome!",
+          message="Welcome! Collect mushrooms — 2 minute limit!",
           player_id=player.player_id,
           server_id=self.server_id,
           server_address=SERVER_CLIENT_ADDRESSES[self.server_id],
-          initial_state=build_merged_client_state_proto(self.state, self.peer),
+          initial_state=build_merged_client_state_proto(
+              self.state, self.peer, self.match
+          ),
       )
 
   def MovePlayer(self, request, context):
+      if self.match.game_over:
+          return game_pb2.MoveResponse(success=False, message="Match is over")
+
       ok, msg, player = self.state.move_player(request.player_id, request.dx, request.dy)
       if not ok or not player:
           return game_pb2.MoveResponse(success=False, message=msg)
@@ -173,16 +198,10 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
       )
 
   def PickupMushroom(self, request, context):
-      """
-      Distributed-safe mushroom pickup.
+      """Distributed-safe mushroom pickup with post-collect respawn."""
+      if self.match.game_over:
+          return game_pb2.PickupResponse(success=False, message="Match is over")
 
-      Flow:
-        1. Locate mushroom under player feet (local state).
-        2. If near border / cross-region => acquire Ricart-Agrawala lock via gRPC.
-        3. Re-check mushroom still exists (another player may have won race).
-        4. Remove mushroom, increment score, publish events.
-        5. Release lock and notify peer.
-      """
       player = self.state.get_player(request.player_id)
       if not player:
           return game_pb2.PickupResponse(success=False, message="Unknown player")
@@ -240,6 +259,9 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
               removed.mushroom_id, player.player_id, player.score
           )
 
+          # Top up mushroom pool to ACTIVE_MUSHROOM_COUNT across both servers.
+          self.match.ensure_mushroom_quota()
+
           return game_pb2.PickupResponse(
               success=True,
               message="Mushroom collected!",
@@ -253,7 +275,7 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
               self.peer.release_mushroom_lock(target_mushroom_id, ts)
 
   def GetGameState(self, request, context):
-      return build_merged_client_state_proto(self.state, self.peer)
+      return build_merged_client_state_proto(self.state, self.peer, self.match)
 
   def LeaveGame(self, request, context):
       removed = self.state.remove_player(request.player_id)
@@ -271,11 +293,13 @@ class RegionSyncServicer(game_pb2_grpc.RegionSyncServicer):
       state: "RegionGameState",
       mutex: "RicartAgrawalaMutex",
       publisher: "RabbitPublisher",
+      match: "MatchManager",
   ):
       self.server_id = server_id
       self.state = state
       self.mutex = mutex
       self.publisher = publisher
+      self.match = match
 
   def HandoffPlayer(self, request, context):
       player = Player(
@@ -323,6 +347,53 @@ class RegionSyncServicer(game_pb2_grpc.RegionSyncServicer):
           mushrooms=[_mushroom_to_proto(m) for m in self.state.all_mushrooms()],
       )
 
+  def EnsureMatchStarted(self, request, context):
+      self.match.ensure_started()
+      info = self.match.to_dict()
+      return game_pb2.EnsureMatchStartedResponse(
+          state=game_pb2.MatchState(
+              end_time_unix=int(info["end_time_unix"]),
+              game_over=info["game_over"],
+              winner_name=info["winner_name"],
+              winner_player_id=info["winner_player_id"],
+              winner_score=info["winner_score"],
+          )
+      )
+
+  def SpawnMushroom(self, request, context):
+      mushroom = self.state.try_spawn_random_mushroom()
+      if not mushroom:
+          return game_pb2.SpawnMushroomResponse(success=False)
+      self.publisher.publish(EventType.MUSHROOM_SPAWNED, mushroom.to_dict())
+      return game_pb2.SpawnMushroomResponse(
+          success=True,
+          mushroom=_mushroom_to_proto(mushroom),
+      )
+
+  def EnsureMushroomQuota(self, request, context):
+      self.match.ensure_mushroom_quota()
+      return game_pb2.EnsureMushroomQuotaAck(success=True)
+
+  def NotifyGameEnded(self, request, context):
+      self.match.receive_game_ended(
+          {
+              "end_time_unix": request.state.end_time_unix,
+              "winner_name": request.state.winner_name,
+              "winner_player_id": request.state.winner_player_id,
+              "winner_score": request.state.winner_score,
+          }
+      )
+      self.publisher.publish(
+          EventType.GAME_ENDED,
+          {
+              "winner_name": request.state.winner_name,
+              "winner_player_id": request.state.winner_player_id,
+              "winner_score": request.state.winner_score,
+              "end_time_unix": request.state.end_time_unix,
+          },
+      )
+      return game_pb2.NotifyGameEndedAck(success=True)
+
   def NotifyMushroomRemoved(self, request, context):
       """Peer removed a mushroom — mirror deletion and score if player known."""
       self.state.remove_mushroom(request.mushroom_id)
@@ -346,15 +417,16 @@ def serve_grpc(
     mutex: "RicartAgrawalaMutex",
     peer: "PeerRegionClient",
     publisher: "RabbitPublisher",
+    match: "MatchManager",
 ) -> grpc.Server:
     """Create and start a combined gRPC server exposing both services."""
     grpc_server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     game_pb2_grpc.add_GameServiceServicer_to_server(
-        GameServiceServicer(server_id, state, mutex, peer, publisher),
+        GameServiceServicer(server_id, state, mutex, peer, publisher, match),
         grpc_server,
     )
     game_pb2_grpc.add_RegionSyncServicer_to_server(
-        RegionSyncServicer(server_id, state, mutex, publisher),
+        RegionSyncServicer(server_id, state, mutex, publisher, match),
         grpc_server,
     )
     grpc_server.add_insecure_port(f"[::]:{port}")

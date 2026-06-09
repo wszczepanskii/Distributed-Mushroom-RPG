@@ -80,6 +80,71 @@ class PeerRegionClient:
         except grpc.RpcError as exc:
             logger.error("Mushroom removal notify failed: %s", exc)
 
+    def ensure_match_started(self) -> Optional[dict]:
+        assert self._stub
+        try:
+            response = self._stub.EnsureMatchStarted(
+                game_pb2.EnsureMatchStartedRequest(), timeout=3
+            )
+            return self._match_state_to_dict(response.state)
+        except grpc.RpcError as exc:
+            logger.warning("Could not start match on coordinator: %s", exc)
+            return None
+
+    def request_spawn_mushroom(self) -> Optional[Mushroom]:
+        assert self._stub
+        try:
+            response = self._stub.SpawnMushroom(
+                game_pb2.SpawnMushroomRequest(), timeout=3
+            )
+            if not response.success:
+                return None
+            m = response.mushroom
+            return Mushroom(
+                mushroom_id=m.mushroom_id,
+                x=m.x,
+                y=m.y,
+                owner_region=m.owner_region,
+            )
+        except grpc.RpcError as exc:
+            logger.warning("Peer mushroom spawn failed: %s", exc)
+            return None
+
+    def ensure_mushroom_quota(self) -> None:
+        assert self._stub
+        try:
+            self._stub.EnsureMushroomQuota(
+                game_pb2.EnsureMushroomQuotaRequest(), timeout=5
+            )
+        except grpc.RpcError as exc:
+            logger.warning("Ensure mushroom quota failed: %s", exc)
+
+    def notify_game_ended(self, state: dict) -> None:
+        assert self._stub
+        request = game_pb2.NotifyGameEndedRequest(
+            state=game_pb2.MatchState(
+                end_time_unix=int(state["end_time_unix"]),
+                game_over=state["game_over"],
+                winner_name=state["winner_name"],
+                winner_player_id=state["winner_player_id"],
+                winner_score=state["winner_score"],
+            )
+        )
+        try:
+            self._stub.NotifyGameEnded(request, timeout=3)
+        except grpc.RpcError as exc:
+            logger.error("Notify game ended failed: %s", exc)
+
+    @staticmethod
+    def _match_state_to_dict(state: game_pb2.MatchState) -> dict:
+        return {
+            "end_time_unix": state.end_time_unix,
+            "game_over": state.game_over,
+            "winner_name": state.winner_name,
+            "winner_player_id": state.winner_player_id,
+            "winner_score": state.winner_score,
+        }
+
     def get_active_mushrooms(self) -> list[Mushroom]:
         assert self._stub
         try:

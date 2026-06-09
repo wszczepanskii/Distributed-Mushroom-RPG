@@ -116,7 +116,14 @@ python -m client.main --name Bob --server localhost:50052
 | Space         | Pick up mushroom on current tile |
 | Esc           | Quit                             |
 
-Walk across the **yellow border** to trigger a server handoff. Collect mushrooms — border shrooms test distributed locking when both players rush the same tile.
+Walk across the **yellow border** to trigger a server handoff.
+
+### Match rules
+
+- **2-minute timer** starts when the first player joins
+- **5 mushrooms** always active on the map
+- Each pickup instantly spawns replacements until the count is back to 5 (random server/location)
+- When time runs out, the player with the **most mushrooms wins** (draw on tie)
 
 ## Configuration
 

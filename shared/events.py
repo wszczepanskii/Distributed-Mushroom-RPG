@@ -20,6 +20,8 @@ class EventType(str, Enum):
     MUSHROOM_SPAWNED = "mushroom_spawned"
     MUSHROOM_REMOVED = "mushroom_removed"
     SCORE_UPDATED = "score_updated"
+    GAME_STARTED = "game_started"
+    GAME_ENDED = "game_ended"
 
 
 def encode_event(event_type: EventType, payload: Dict[str, Any]) -> bytes:
