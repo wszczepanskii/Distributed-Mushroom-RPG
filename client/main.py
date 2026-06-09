@@ -89,11 +89,13 @@ def draw_world(screen, font, world: ClientWorldView, local_player_id: str):
         name_surf = font.render(f"{p['name']} ({p['score']})", True, COLOR_TEXT)
         screen.blit(name_surf, (p["x"] * TILE_SIZE, p["y"] * TILE_SIZE - 18))
 
-    # Match timer (top center)
+    # Match timer (lower right of map)
     mins, secs = divmod(remaining_seconds, 60)
     timer_color = (255, 100, 100) if remaining_seconds <= 30 and not game_over else COLOR_TEXT
     timer_surf = font.render(f"Time: {mins:02d}:{secs:02d}", True, timer_color)
-    screen.blit(timer_surf, (map_w * TILE_SIZE // 2 - 50, 8))
+    timer_x = map_w * TILE_SIZE - timer_surf.get_width() - 8
+    timer_y = map_h * TILE_SIZE - timer_surf.get_height() - 8
+    screen.blit(timer_surf, (timer_x, timer_y))
 
     if game_over:
         overlay = pygame.Surface((map_w * TILE_SIZE, map_h * TILE_SIZE))
