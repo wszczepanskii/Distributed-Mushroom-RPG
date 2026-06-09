@@ -1,0 +1,188 @@
+syntax = "proto3";
+
+package game;
+
+// =============================================================================
+// Client <-> Region Server
+// Each player connects to exactly one region server at a time. When a player
+// crosses the horizontal map border, the client is redirected to the peer server.
+// =============================================================================
+
+service GameService {
+  // Register a new player and receive initial world state.
+  rpc JoinGame(JoinRequest) returns (JoinResponse);
+
+  // Authoritative movement: server validates position and may trigger handoff.
+  rpc MovePlayer(MoveRequest) returns (MoveResponse);
+
+  // Pick up a mushroom. Server runs distributed mutual exclusion before commit.
+  rpc PickupMushroom(PickupRequest) returns (PickupResponse);
+
+  // Poll/stream fallback for clients that miss RabbitMQ events.
+  rpc GetGameState(StateRequest) returns (GameState);
+
+  rpc LeaveGame(LeaveRequest) returns (LeaveResponse);
+}
+
+// =============================================================================
+// Server <-> Server (inter-region synchronization)
+// =============================================================================
+
+service RegionSync {
+  // Transfer player authority when crossing the map border.
+  rpc HandoffPlayer(PlayerHandoffRequest) returns (PlayerHandoffResponse);
+
+  // Ricart-Agrawala: request permission to enter mushroom pickup critical section.
+  rpc RequestMushroomLock(MushroomLockRequest) returns (MushroomLockReply);
+
+  // Ricart-Agrawala: notify peer that critical section ended.
+  rpc ReleaseMushroomLock(MushroomLockRelease) returns (MushroomLockReleaseAck);
+
+  // Replicate mushroom removal so peer region removes stale entities.
+  rpc NotifyMushroomRemoved(MushroomRemovedNotification) returns (MushroomRemovedAck);
+
+  // Snapshot of players currently managed by the peer region (for join sync).
+  rpc GetActivePlayers(ActivePlayersRequest) returns (ActivePlayersResponse);
+
+  // Snapshot of mushrooms on the peer region (for cross-region client visibility).
+  rpc GetActiveMushrooms(ActiveMushroomsRequest) returns (ActiveMushroomsResponse);
+}
+
+// --- Shared messages ---
+
+message PlayerInfo {
+  string player_id = 1;
+  string name = 2;
+  int32 x = 3;
+  int32 y = 4;
+  int32 score = 5;
+  string connected_server = 6; // "server1" or "server2"
+}
+
+message MushroomInfo {
+  string mushroom_id = 1;
+  int32 x = 2;
+  int32 y = 3;
+  string owner_region = 4; // region that spawned / owns exclusion for this entity
+}
+
+message GameState {
+  repeated PlayerInfo players = 1;
+  repeated MushroomInfo mushrooms = 2;
+  int32 map_width = 3;
+  int32 map_height = 4;
+  int32 border_x = 5;
+}
+
+// --- Client API ---
+
+message JoinRequest {
+  string name = 1;
+}
+
+message JoinResponse {
+  bool success = 1;
+  string message = 2;
+  string player_id = 3;
+  string server_id = 4;
+  string server_address = 5; // "host:port" for gRPC
+  GameState initial_state = 6;
+}
+
+message MoveRequest {
+  string player_id = 1;
+  int32 dx = 2; // -1, 0, or 1
+  int32 dy = 3;
+}
+
+message MoveResponse {
+  bool success = 1;
+  string message = 2;
+  int32 x = 3;
+  int32 y = 4;
+  bool handoff_required = 5;
+  string new_server_address = 6;
+  string new_server_id = 7;
+}
+
+message PickupRequest {
+  string player_id = 1;
+}
+
+message PickupResponse {
+  bool success = 1;
+  string message = 2;
+  int32 new_score = 3;
+  string mushroom_id = 4;
+}
+
+message StateRequest {
+  string player_id = 1;
+}
+
+message LeaveRequest {
+  string player_id = 1;
+}
+
+message LeaveResponse {
+  bool success = 1;
+}
+
+// --- Inter-server API (Ricart-Agrawala mutual exclusion) ---
+
+message MushroomLockRequest {
+  string requester_server = 1;
+  string mushroom_id = 2;
+  string player_id = 3;
+  int64 lamport_timestamp = 4;
+}
+
+message MushroomLockReply {
+  bool granted = 1;
+  string message = 2;
+}
+
+message MushroomLockRelease {
+  string releaser_server = 1;
+  string mushroom_id = 2;
+  int64 lamport_timestamp = 3;
+}
+
+message MushroomLockReleaseAck {
+  bool success = 1;
+}
+
+message MushroomRemovedNotification {
+  string mushroom_id = 1;
+  string removed_by_player = 2;
+  int32 player_new_score = 3;
+}
+
+message MushroomRemovedAck {
+  bool success = 1;
+}
+
+// --- Player handoff ---
+
+message PlayerHandoffRequest {
+  PlayerInfo player = 1;
+  string from_server = 2;
+  string to_server = 3;
+}
+
+message PlayerHandoffResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ActivePlayersRequest {}
+
+message ActivePlayersResponse {
+  repeated PlayerInfo players = 1;
+}
+
+message ActiveMushroomsRequest {}
+
+message ActiveMushroomsResponse {
+  repeated MushroomInfo mushrooms = 1;
+}
